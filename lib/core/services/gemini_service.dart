@@ -25,7 +25,7 @@ class GeminiException implements Exception {
 
 class GeminiQuotaException extends GeminiException {
   GeminiQuotaException([
-    super.userMessage = "Gemini request limit reached. Please try again shortly.",
+    super.userMessage = "Gemini request limit reached. Please try again later.",
     int? statusCode = 429,
     String? responseBody,
   ]) : super(
@@ -47,7 +47,7 @@ class GeminiService {
   GeminiService({String? apiKey}) : _apiKey = apiKey ?? _defaultApiKey;
 
   Uint8List? get lastScannedImageBytes => _lastScannedImageBytes;
-  bool get hasStoredImage => _lastScannedImageBytes != null;
+  bool get hasStoredImage => _lastScannedImageBytes != null && _lastScannedImageBytes!.isNotEmpty;
 
   String get _cleanApiKey => _apiKey.trim();
 
@@ -68,10 +68,21 @@ class GeminiService {
     Uint8List imageBytes, {
     String? mlKitContext,
   }) async {
+    if (imageBytes.isEmpty) {
+      debugPrint("Gemini request failed: Captured image is empty.");
+      throw GeminiException("Captured image is empty.");
+    }
+
+    debugPrint("Gemini request started");
     _lastScannedImageBytes = imageBytes;
     _conversationTurns.clear();
 
     final base64Image = base64Encode(imageBytes);
+    if (base64Image.isEmpty) {
+      debugPrint("Gemini request failed: Base64 image encoding resulted in empty string.");
+      throw GeminiException("Captured image is empty.");
+    }
+    debugPrint("Gemini image preparation completed");
 
     String prompt = GeminiPrompts.sceneDescriptionPrompt;
     if (mlKitContext != null && mlKitContext.isNotEmpty) {
@@ -97,10 +108,21 @@ class GeminiService {
 
   /// Document Reader: Read entire document text
   Future<String> readDocument(Uint8List imageBytes) async {
+    if (imageBytes.isEmpty) {
+      debugPrint("Gemini request failed: Captured image is empty.");
+      throw GeminiException("Captured image is empty.");
+    }
+
+    debugPrint("Gemini request started");
     _lastScannedImageBytes = imageBytes;
     _conversationTurns.clear();
 
     final base64Image = base64Encode(imageBytes);
+    if (base64Image.isEmpty) {
+      debugPrint("Gemini request failed: Base64 image encoding resulted in empty string.");
+      throw GeminiException("Captured image is empty.");
+    }
+    debugPrint("Gemini image preparation completed");
 
     final initialTurn = ConversationTurn.imageUser(
       textPrompt: GeminiPrompts.documentReaderPrompt,
@@ -122,7 +144,7 @@ class GeminiService {
   /// Step 4: Extract intent from spoken follow-up question
   Future<AiIntent> extractIntent(String followUpQuestion) async {
     final key = _cleanApiKey;
-    if (key.isEmpty) {
+    if (key.isEmpty || key == "YOUR_GEMINI_API_KEY_HERE") {
       return AiIntent.generalQuestion;
     }
 
@@ -134,9 +156,6 @@ class GeminiService {
       "generationConfig": {
         "maxOutputTokens": 30,
         "temperature": 0.0,
-        "thinkingConfig": {
-          "thinkingLevel": "minimal"
-        }
       }
     });
 
@@ -165,10 +184,11 @@ class GeminiService {
     required String intentLabel,
     String? mlKitContext,
   }) async {
-    if (_lastScannedImageBytes == null) {
+    if (_lastScannedImageBytes == null || _lastScannedImageBytes!.isEmpty) {
       return "No image scanned yet. Please scan a scene first.";
     }
 
+    debugPrint("Gemini request started");
     var prompt = GeminiPrompts.followUpQuestionPrompt(
       question: followUpQuestion,
       intent: intentLabel,
@@ -195,7 +215,7 @@ class GeminiService {
     double temperature = 0.2,
   }) async {
     final key = _cleanApiKey;
-    if (key.isEmpty) {
+    if (key.isEmpty || key == "YOUR_GEMINI_API_KEY_HERE") {
       throw GeminiException("Gemini authentication failed. Please check the API configuration.");
     }
 
@@ -204,9 +224,6 @@ class GeminiService {
       "generationConfig": {
         "maxOutputTokens": maxTokens,
         "temperature": temperature,
-        "thinkingConfig": {
-          "thinkingLevel": "minimal"
-        }
       }
     });
 
@@ -236,8 +253,9 @@ class GeminiService {
         final statusCode = response.statusCode;
         final responseBody = response.body;
 
+        debugPrint("Gemini response received");
         debugPrint("Gemini HTTP status: $statusCode");
-        debugPrint("Gemini response: $responseBody");
+        debugPrint("Gemini error body: $responseBody");
         debugPrint("Gemini attempt: $attempt");
 
         if (statusCode == 200) {
@@ -246,20 +264,40 @@ class GeminiService {
 
         // Non-retryable HTTP status codes
         if (statusCode == 400) {
+          String userMsg = "Gemini request is invalid.";
+          try {
+            final decoded = jsonDecode(responseBody);
+            final errorMap = decoded['error'];
+            if (errorMap is Map) {
+              final msg = errorMap['message']?.toString() ?? "";
+              final statusStr = errorMap['status']?.toString() ?? "";
+              debugPrint("Gemini 400 Error details - status: $statusStr, message: $msg");
+              if (msg.contains("API key not valid") || msg.contains("API_KEY_INVALID")) {
+                userMsg = "Gemini authentication failed. Please check the API configuration.";
+              }
+            }
+          } catch (_) {}
+
           throw GeminiException(
-            "Gemini could not process this request.",
+            userMsg,
             statusCode: statusCode,
             responseBody: responseBody,
           );
-        } else if (statusCode == 401 || statusCode == 403) {
+        } else if (statusCode == 401) {
           throw GeminiException(
-            "Gemini authentication failed. Please check the API configuration.",
+            "Gemini authentication failed.",
+            statusCode: statusCode,
+            responseBody: responseBody,
+          );
+        } else if (statusCode == 403) {
+          throw GeminiException(
+            "Gemini access is not permitted.",
             statusCode: statusCode,
             responseBody: responseBody,
           );
         } else if (statusCode == 404) {
           throw GeminiException(
-            "Gemini model not found.",
+            "Gemini model is unavailable.",
             statusCode: statusCode,
             responseBody: responseBody,
           );
@@ -274,8 +312,8 @@ class GeminiService {
             statusCode == 504) {
           if (attempt > maxRetries) {
             final userMsg = statusCode == 429
-                ? "Gemini request limit reached. Please try again shortly."
-                : "Gemini is temporarily busy. Please try again.";
+                ? "Gemini request limit reached. Please try again later."
+                : "Gemini is temporarily unavailable.";
             throw GeminiException(
               userMsg,
               statusCode: statusCode,
@@ -286,7 +324,7 @@ class GeminiService {
           // Other unexpected status codes
           if (attempt > maxRetries) {
             throw GeminiException(
-              "Gemini is temporarily busy. Please try again.",
+              "Gemini is temporarily unavailable.",
               statusCode: statusCode,
               responseBody: responseBody,
             );
@@ -331,7 +369,7 @@ class GeminiService {
         if (e is GeminiException) rethrow;
         debugPrint("Gemini exception on attempt $attempt: $e");
         if (attempt > maxRetries) {
-          throw GeminiException("Gemini is temporarily busy. Please try again.");
+          throw GeminiException("Gemini is temporarily unavailable.");
         }
         final delaySec = pow(2, attempt - 1).toInt().clamp(1, 16);
         final totalDelayMs = (delaySec * 1000) + random.nextInt(300);
@@ -339,13 +377,13 @@ class GeminiService {
       }
     }
 
-    throw GeminiException("Gemini is temporarily busy. Please try again.");
+    throw GeminiException("Gemini is temporarily unavailable.");
   }
 
   String _extractTextFromResponse(http.Response response) {
     if (response.body.trim().isEmpty) {
       debugPrint("Gemini response body was empty.");
-      throw GeminiException("Gemini could not process this request.");
+      throw GeminiException("Gemini returned an empty response.");
     }
 
     dynamic decoded;
@@ -353,59 +391,72 @@ class GeminiService {
       decoded = jsonDecode(response.body);
     } catch (e) {
       debugPrint("Failed to parse Gemini JSON response: $e");
-      throw GeminiException("Gemini could not process this request.");
+      throw GeminiException("Gemini request is invalid.");
     }
 
     if (decoded is! Map<String, dynamic>) {
       debugPrint("Gemini response is not a Map: ${response.body}");
-      throw GeminiException("Gemini could not process this request.");
+      throw GeminiException("Gemini request is invalid.");
     }
 
     if (decoded.containsKey('error')) {
       final errorMap = decoded['error'];
       final code = errorMap is Map ? errorMap['code'] : null;
       final message = errorMap is Map ? errorMap['message'] : null;
-      debugPrint("Gemini response contained error object: $code - $message");
-      if (code == 429) {
-        throw GeminiException("Gemini request limit reached. Please try again shortly.");
+      final statusStr = errorMap is Map ? errorMap['status'] : null;
+      debugPrint("Gemini response contained error object: $code ($statusStr) - $message");
+
+      if (code == 400 || statusStr == "INVALID_ARGUMENT") {
+        if (message != null && message.toString().contains("API key not valid")) {
+          throw GeminiException("Gemini authentication failed.");
+        }
+        throw GeminiException("Gemini request is invalid.");
+      } else if (code == 401) {
+        throw GeminiException("Gemini authentication failed.");
+      } else if (code == 403) {
+        throw GeminiException("Gemini access is not permitted.");
+      } else if (code == 404) {
+        throw GeminiException("Gemini model is unavailable.");
+      } else if (code == 429) {
+        throw GeminiException("Gemini request limit reached. Please try again later.");
       }
-      throw GeminiException("Gemini is temporarily busy. Please try again.");
+      throw GeminiException("Gemini is temporarily unavailable.");
     }
 
     final candidates = decoded['candidates'];
     if (candidates is! List || candidates.isEmpty) {
       debugPrint("Gemini response candidates field missing or empty.");
-      throw GeminiException("Gemini could not process this request.");
+      throw GeminiException("Gemini returned an empty response.");
     }
 
     final firstCandidate = candidates.first;
     if (firstCandidate is! Map<String, dynamic>) {
       debugPrint("Gemini candidate is not a Map.");
-      throw GeminiException("Gemini could not process this request.");
+      throw GeminiException("Gemini returned an empty response.");
     }
 
     final content = firstCandidate['content'];
     if (content is! Map<String, dynamic>) {
       debugPrint("Gemini candidate content missing or invalid.");
-      throw GeminiException("Gemini could not process this request.");
+      throw GeminiException("Gemini returned an empty response.");
     }
 
     final parts = content['parts'];
     if (parts is! List || parts.isEmpty) {
       debugPrint("Gemini content parts missing or empty.");
-      throw GeminiException("Gemini could not process this request.");
+      throw GeminiException("Gemini returned an empty response.");
     }
 
     final firstPart = parts.first;
     if (firstPart is! Map<String, dynamic>) {
       debugPrint("Gemini part is not a Map.");
-      throw GeminiException("Gemini could not process this request.");
+      throw GeminiException("Gemini returned an empty response.");
     }
 
     final text = firstPart['text'];
     if (text == null || text.toString().trim().isEmpty) {
       debugPrint("Gemini part text is null or empty.");
-      throw GeminiException("Gemini could not process this request.");
+      throw GeminiException("Gemini returned an empty response.");
     }
 
     return text.toString().trim();

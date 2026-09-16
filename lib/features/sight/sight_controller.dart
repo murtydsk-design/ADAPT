@@ -137,9 +137,9 @@ class SightController {
       final rawBytes = await cameraService.captureImage();
       final captureComplete = totalStopwatch.elapsedMilliseconds;
 
-      if (rawBytes == null) {
-        _fullGeminiResponse = "Failed to capture image.";
-        activeActionStatus = "Failed to capture image.";
+      if (rawBytes == null || rawBytes.isEmpty) {
+        _fullGeminiResponse = "Captured image is empty.";
+        activeActionStatus = "Captured image is empty.";
         await ttsService.speak(_fullGeminiResponse);
         return;
       }
@@ -147,6 +147,13 @@ class SightController {
       // Step 1: Fast Image Compression and Optimization (4MB -> ~100KB)
       final imageBytes = await ImageCompressor.compressForVision(rawBytes);
       final prepComplete = totalStopwatch.elapsedMilliseconds;
+
+      if (imageBytes.isEmpty) {
+        _fullGeminiResponse = "Captured image is empty.";
+        activeActionStatus = "Captured image is empty.";
+        await ttsService.speak(_fullGeminiResponse);
+        return;
+      }
 
       // Step 2: Run On-Device ML Kit Processing for supporting context
       _lastMlKitResult = await mlKitService.analyzeImage(imageBytes);
@@ -180,7 +187,7 @@ class SightController {
       _fullGeminiResponse = "";
       final userMessage = (e is GeminiException)
           ? e.userMessage
-          : "Gemini is temporarily busy. Please try again.";
+          : "Gemini is temporarily unavailable.";
       activeActionStatus = userMessage;
       await ttsService.speak(userMessage);
     } finally {
@@ -208,9 +215,9 @@ class SightController {
       await ttsService.speak("Reading document.");
 
       final rawBytes = await cameraService.captureImage();
-      if (rawBytes == null) {
-        _fullGeminiResponse = "Failed to capture document.";
-        activeActionStatus = "Failed to capture document.";
+      if (rawBytes == null || rawBytes.isEmpty) {
+        _fullGeminiResponse = "Captured image is empty.";
+        activeActionStatus = "Captured image is empty.";
         await ttsService.speak(_fullGeminiResponse);
         return;
       }
@@ -235,7 +242,7 @@ class SightController {
       _fullGeminiResponse = "";
       final userMessage = (e is GeminiException)
           ? e.userMessage
-          : "Gemini is temporarily busy. Please try again.";
+          : "Gemini is temporarily unavailable.";
       activeActionStatus = userMessage;
       await ttsService.speak(userMessage);
     } finally {
@@ -354,7 +361,7 @@ class SightController {
       _fullGeminiResponse = "";
       final userMessage = (e is GeminiException)
           ? e.userMessage
-          : "Gemini is temporarily busy. Please try again.";
+          : "Gemini is temporarily unavailable.";
       activeActionStatus = userMessage;
       await ttsService.speak(userMessage);
     } finally {
