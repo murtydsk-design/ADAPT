@@ -25,7 +25,7 @@ class GeminiException implements Exception {
 
 class GeminiQuotaException extends GeminiException {
   GeminiQuotaException([
-    super.userMessage = "Gemini request limit reached. Please try again later.",
+    super.userMessage = "Gemini request limit reached (429). Please try again later.",
     int? statusCode = 429,
     String? responseBody,
   ]) : super(
@@ -63,6 +63,13 @@ class GeminiService {
     _lastScannedImageBytes = null;
   }
 
+  /// Diagnostic key check (does NOT log full key)
+  void _logKeyDiagnostic() {
+    final key = _cleanApiKey;
+    final suffix = key.length >= 4 ? key.substring(key.length - 4) : "N/A";
+    debugPrint("GEMINI KEY DIAGNOSTIC: loaded=${key.isNotEmpty}, length=${key.length}, suffix=...$suffix");
+  }
+
   /// Step 1 & 2: Describe scene (Item Scanner)
   Future<String> describeScene(
     Uint8List imageBytes, {
@@ -73,7 +80,8 @@ class GeminiService {
       throw GeminiException("Captured image is empty.");
     }
 
-    debugPrint("Gemini request started");
+    _logKeyDiagnostic();
+    debugPrint("GEMINI REQUEST START");
     _lastScannedImageBytes = imageBytes;
     _conversationTurns.clear();
 
@@ -113,7 +121,8 @@ class GeminiService {
       throw GeminiException("Captured image is empty.");
     }
 
-    debugPrint("Gemini request started");
+    _logKeyDiagnostic();
+    debugPrint("GEMINI REQUEST START");
     _lastScannedImageBytes = imageBytes;
     _conversationTurns.clear();
 
@@ -188,7 +197,8 @@ class GeminiService {
       return "No image scanned yet. Please scan a scene first.";
     }
 
-    debugPrint("Gemini request started");
+    _logKeyDiagnostic();
+    debugPrint("GEMINI REQUEST START");
     var prompt = GeminiPrompts.followUpQuestionPrompt(
       question: followUpQuestion,
       intent: intentLabel,
@@ -253,9 +263,9 @@ class GeminiService {
         final statusCode = response.statusCode;
         final responseBody = response.body;
 
-        debugPrint("Gemini response received");
-        debugPrint("Gemini HTTP status: $statusCode");
-        debugPrint("Gemini error body: $responseBody");
+        debugPrint("GEMINI RESPONSE RECEIVED");
+        debugPrint("GEMINI HTTP STATUS: $statusCode");
+        debugPrint("GEMINI RESPONSE BODY: $responseBody");
         debugPrint("Gemini attempt: $attempt");
 
         if (statusCode == 200) {
@@ -264,7 +274,7 @@ class GeminiService {
 
         // Non-retryable HTTP status codes
         if (statusCode == 400) {
-          String userMsg = "Gemini request is invalid.";
+          String userMsg = "Gemini request is invalid (400).";
           try {
             final decoded = jsonDecode(responseBody);
             final errorMap = decoded['error'];
@@ -273,7 +283,9 @@ class GeminiService {
               final statusStr = errorMap['status']?.toString() ?? "";
               debugPrint("Gemini 400 Error details - status: $statusStr, message: $msg");
               if (msg.contains("API key not valid") || msg.contains("API_KEY_INVALID")) {
-                userMsg = "Gemini authentication failed. Please check the API configuration.";
+                userMsg = "Gemini authentication failed (400: API key invalid).";
+              } else {
+                userMsg = "Gemini request is invalid (400: $msg).";
               }
             }
           } catch (_) {}
@@ -285,19 +297,19 @@ class GeminiService {
           );
         } else if (statusCode == 401) {
           throw GeminiException(
-            "Gemini authentication failed.",
+            "Gemini authentication failed (401).",
             statusCode: statusCode,
             responseBody: responseBody,
           );
         } else if (statusCode == 403) {
           throw GeminiException(
-            "Gemini access is not permitted.",
+            "Gemini access is not permitted (403).",
             statusCode: statusCode,
             responseBody: responseBody,
           );
         } else if (statusCode == 404) {
           throw GeminiException(
-            "Gemini model is unavailable.",
+            "Gemini model is unavailable (404).",
             statusCode: statusCode,
             responseBody: responseBody,
           );
@@ -312,8 +324,8 @@ class GeminiService {
             statusCode == 504) {
           if (attempt > maxRetries) {
             final userMsg = statusCode == 429
-                ? "Gemini request limit reached. Please try again later."
-                : "Gemini is temporarily unavailable.";
+                ? "Gemini request limit reached (429). Please try again later."
+                : "Gemini is temporarily unavailable ($statusCode).";
             throw GeminiException(
               userMsg,
               statusCode: statusCode,
@@ -324,7 +336,7 @@ class GeminiService {
           // Other unexpected status codes
           if (attempt > maxRetries) {
             throw GeminiException(
-              "Gemini is temporarily unavailable.",
+              "Gemini is temporarily unavailable ($statusCode).",
               statusCode: statusCode,
               responseBody: responseBody,
             );
@@ -408,17 +420,17 @@ class GeminiService {
 
       if (code == 400 || statusStr == "INVALID_ARGUMENT") {
         if (message != null && message.toString().contains("API key not valid")) {
-          throw GeminiException("Gemini authentication failed.");
+          throw GeminiException("Gemini authentication failed (400: API key invalid).");
         }
-        throw GeminiException("Gemini request is invalid.");
+        throw GeminiException("Gemini request is invalid (400: $message).");
       } else if (code == 401) {
-        throw GeminiException("Gemini authentication failed.");
+        throw GeminiException("Gemini authentication failed (401).");
       } else if (code == 403) {
-        throw GeminiException("Gemini access is not permitted.");
+        throw GeminiException("Gemini access is not permitted (403).");
       } else if (code == 404) {
-        throw GeminiException("Gemini model is unavailable.");
+        throw GeminiException("Gemini model is unavailable (404).");
       } else if (code == 429) {
-        throw GeminiException("Gemini request limit reached. Please try again later.");
+        throw GeminiException("Gemini request limit reached (429). Please try again later.");
       }
       throw GeminiException("Gemini is temporarily unavailable.");
     }
