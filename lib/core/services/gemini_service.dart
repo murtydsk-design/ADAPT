@@ -86,7 +86,7 @@ class GeminiService {
     _conversationTurns.add(initialTurn);
 
     final responseText = await _sendToGemini(
-      maxTokens: 180,
+      maxTokens: 300,
       temperature: 0.2,
     );
 
@@ -130,7 +130,14 @@ class GeminiService {
     final body = jsonEncode({
       "contents": [
         ConversationTurn.textUser(prompt).toJson()
-      ]
+      ],
+      "generationConfig": {
+        "maxOutputTokens": 30,
+        "temperature": 0.0,
+        "thinkingConfig": {
+          "thinkingLevel": "minimal"
+        }
+      }
     });
 
     try {
@@ -174,7 +181,7 @@ class GeminiService {
     _conversationTurns.add(ConversationTurn.textUser(prompt));
 
     final responseText = await _sendToGemini(
-      maxTokens: 250,
+      maxTokens: 300,
       temperature: 0.2,
     );
 
@@ -184,7 +191,7 @@ class GeminiService {
   }
 
   Future<String> _sendToGemini({
-    int maxTokens = 250,
+    int maxTokens = 300,
     double temperature = 0.2,
   }) async {
     final key = _cleanApiKey;
@@ -197,6 +204,9 @@ class GeminiService {
       "generationConfig": {
         "maxOutputTokens": maxTokens,
         "temperature": temperature,
+        "thinkingConfig": {
+          "thinkingLevel": "minimal"
+        }
       }
     });
 

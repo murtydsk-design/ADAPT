@@ -2,12 +2,14 @@ import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:vibration/vibration.dart';
+import '../../core/models/ai_intent.dart';
 import '../../core/services/camera_service.dart';
 import '../../core/services/gemini_service.dart';
 import '../../core/services/ml_kit_service.dart';
 import '../../core/services/speech_service.dart';
 import '../../core/services/torch_service.dart';
 import '../../core/services/tts_service.dart';
+import '../../core/utils/image_compressor.dart';
 
 class SightController {
   final CameraService cameraService;
@@ -28,7 +30,7 @@ class SightController {
   bool isProcessingAi = false;
   bool isListeningSpeech = false;
 
-  // Request lock to prevent duplicate concurrent Gemini calls
+  // Request lock to prevent duplicate concurrent AI calls
   bool _isAiRequestInProgress = false;
 
   MlKitAnalysisResult? _lastMlKitResult;
@@ -113,7 +115,7 @@ class SightController {
     }
   }
 
-  /// Item Scanner: Capture 1 image, run ML Kit on-device processing + Gemini
+  /// Item Scanner: Capture 1 image, optimize, run ML Kit on-device + Gemini
   Future<void> scanScene({required VoidCallback onStateChanged}) async {
     if (_isAiRequestInProgress || !cameraService.isInitialized) return;
 
@@ -125,27 +127,38 @@ class SightController {
     activeActionStatus = "Identifying items in scene...";
     onStateChanged();
 
+    final totalStopwatch = Stopwatch()..start();
+
     try {
       Vibration.vibrate(duration: 80);
       await ttsService.speak("Scanning scene.");
 
-      final imageBytes = await cameraService.captureImage();
-      if (imageBytes == null) {
+      final captureStart = totalStopwatch.elapsedMilliseconds;
+      final rawBytes = await cameraService.captureImage();
+      final captureComplete = totalStopwatch.elapsedMilliseconds;
+
+      if (rawBytes == null) {
         _fullGeminiResponse = "Failed to capture image.";
         activeActionStatus = "Failed to capture image.";
         await ttsService.speak(_fullGeminiResponse);
         return;
       }
 
-      // Step 1: Run On-Device ML Kit Processing for supporting context
+      // Step 1: Fast Image Compression and Optimization (4MB -> ~100KB)
+      final imageBytes = await ImageCompressor.compressForVision(rawBytes);
+      final prepComplete = totalStopwatch.elapsedMilliseconds;
+
+      // Step 2: Run On-Device ML Kit Processing for supporting context
       _lastMlKitResult = await mlKitService.analyzeImage(imageBytes);
       final mlKitContext = _lastMlKitResult?.toContextPrompt();
 
-      // Step 2: Request Deep Scene Understanding from Gemini 3.6 Flash
+      // Step 3: Request Deep Scene Understanding from Gemini 3.6 Flash
+      final geminiStart = totalStopwatch.elapsedMilliseconds;
       final description = await geminiService.describeScene(
         imageBytes,
         mlKitContext: mlKitContext,
       );
+      final geminiComplete = totalStopwatch.elapsedMilliseconds;
 
       _fullGeminiResponse = description;
       activeActionStatus = description.length > 300
@@ -154,7 +167,15 @@ class SightController {
       onStateChanged();
 
       Vibration.vibrate(duration: 80);
+      final ttsStart = totalStopwatch.elapsedMilliseconds;
       await ttsService.speak(_fullGeminiResponse);
+
+      // Latency Logging
+      debugPrint("[PERF] Item Scanner capture: ${captureComplete - captureStart}ms");
+      debugPrint("[PERF] Image optimization: ${prepComplete - captureComplete}ms (size: ${(imageBytes.length / 1024).toStringAsFixed(1)}KB)");
+      debugPrint("[PERF] Gemini response: ${geminiComplete - geminiStart}ms");
+      debugPrint("[PERF] TTS start: ${ttsStart - geminiComplete}ms");
+      debugPrint("[PERF] Total scan-to-speech latency: ${totalStopwatch.elapsedMilliseconds}ms");
     } catch (e) {
       _fullGeminiResponse = "";
       final userMessage = (e is GeminiException)
@@ -186,13 +207,19 @@ class SightController {
       Vibration.vibrate(duration: 80);
       await ttsService.speak("Reading document.");
 
-      final imageBytes = await cameraService.captureImage();
-      if (imageBytes == null) {
+      final rawBytes = await cameraService.captureImage();
+      if (rawBytes == null) {
         _fullGeminiResponse = "Failed to capture document.";
         activeActionStatus = "Failed to capture document.";
         await ttsService.speak(_fullGeminiResponse);
         return;
       }
+
+      final imageBytes = await ImageCompressor.compressForVision(
+        rawBytes,
+        maxDimension: 1280, // Keep higher quality for document OCR
+        quality: 88,
+      );
 
       final resultText = await geminiService.readDocument(imageBytes);
 
@@ -266,7 +293,7 @@ class SightController {
     }
   }
 
-  /// Process Voice Follow-Up: Decision Engine (ML Kit Simple vs Gemini Complex)
+  /// Process Voice Follow-Up: Decision Engine + Single Gemini Multimodal Request
   Future<void> processFollowUp(
     String question, {
     required VoidCallback onStateChanged,
@@ -278,6 +305,8 @@ class SightController {
     activeActionStatus = "Analyzing question...";
     onStateChanged();
 
+    final stopwatch = Stopwatch()..start();
+
     try {
       // Step 1: Check if simple question can be reliably answered on-device via ML Kit
       final onDeviceAnswer = _tryAnswerOnDevice(question, _lastMlKitResult);
@@ -288,21 +317,25 @@ class SightController {
 
         Vibration.vibrate(duration: 80);
         await ttsService.speak(_fullGeminiResponse);
+        debugPrint("[PERF] Follow-up on-device response: ${stopwatch.elapsedMilliseconds}ms");
         return;
       }
 
-      // Step 2: Complex visual task -> Intent Extraction + Gemini 3.6 Flash
-      final intent = await geminiService.extractIntent(question);
+      // Step 2: Complex visual task -> Fast local intent classification (0ms)
+      final localIntent = _classifyIntentLocally(question);
 
       activeActionStatus = "AI: Answering question...";
       onStateChanged();
 
+      // Step 3: Single Gemini multimodal request using stored _lastScannedImageBytes
+      final geminiStart = stopwatch.elapsedMilliseconds;
       final mlKitContext = _lastMlKitResult?.toContextPrompt();
       final answer = await geminiService.answerFollowUp(
         followUpQuestion: question,
-        intentLabel: intent.label,
+        intentLabel: localIntent.label,
         mlKitContext: mlKitContext,
       );
+      final geminiComplete = stopwatch.elapsedMilliseconds;
 
       _fullGeminiResponse = answer;
       activeActionStatus = answer.length > 300
@@ -311,7 +344,12 @@ class SightController {
       onStateChanged();
 
       Vibration.vibrate(duration: 80);
+      final ttsStart = stopwatch.elapsedMilliseconds;
       await ttsService.speak(_fullGeminiResponse);
+
+      debugPrint("[PERF] Follow-up Gemini response: ${geminiComplete - geminiStart}ms");
+      debugPrint("[PERF] Follow-up TTS start: ${ttsStart - geminiComplete}ms");
+      debugPrint("[PERF] Total follow-up latency: ${stopwatch.elapsedMilliseconds}ms");
     } catch (e) {
       _fullGeminiResponse = "";
       final userMessage = (e is GeminiException)
@@ -325,6 +363,38 @@ class SightController {
       onStateChanged();
       evaluateStreamRequirement(onStateChanged: onStateChanged);
     }
+  }
+
+  AiIntent _classifyIntentLocally(String question) {
+    final lower = question.toLowerCase().trim();
+    if (lower.contains("color") || lower.contains("shade") || lower.contains("colour")) {
+      return AiIntent.color;
+    }
+    if (lower.contains("how many") || lower.contains("count") || lower.contains("number of")) {
+      return AiIntent.quantity;
+    }
+    if (lower.contains("written") || lower.contains("text") || lower.contains("read") || lower.contains("word") || lower.contains("say")) {
+      return AiIntent.textContent;
+    }
+    if (lower.contains("where") || lower.contains("position") || lower.contains("location") || lower.contains("next to") || lower.contains("beside") || lower.contains("near")) {
+      return AiIntent.location;
+    }
+    if (lower.contains("price") || lower.contains("cost") || lower.contains("how much") || lower.contains("dollar") || lower.contains("rupee")) {
+      return AiIntent.price;
+    }
+    if (lower.contains("brand") || lower.contains("company") || lower.contains("make") || lower.contains("manufacturer")) {
+      return AiIntent.brand;
+    }
+    if (lower.contains("state") || lower.contains("full") || lower.contains("empty") || lower.contains("open") || lower.contains("closed")) {
+      return AiIntent.objectState;
+    }
+    if (lower.contains("person") || lower.contains("people") || lower.contains("someone") || lower.contains("who")) {
+      return AiIntent.personPresence;
+    }
+    if (lower.contains("what is") || lower.contains("what are") || lower.contains("identify") || lower.contains("this")) {
+      return AiIntent.objectIdentification;
+    }
+    return AiIntent.generalQuestion;
   }
 
   String? _tryAnswerOnDevice(String question, MlKitAnalysisResult? mlKit) {
