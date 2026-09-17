@@ -153,10 +153,10 @@ class SightController {
       final aiComplete = totalStopwatch.elapsedMilliseconds;
 
       _fullGeminiResponse = description;
-      activeActionStatus = description.length > 300
-          ? "${description.substring(0, 300)}..."
-          : description;
+      activeActionStatus = "Scan complete. Reading result...";
       onStateChanged();
+
+      debugPrint("GEMINI RESPONSE LENGTH: ${_fullGeminiResponse.length}");
 
       Vibration.vibrate(duration: 80);
       final ttsStart = totalStopwatch.elapsedMilliseconds;
@@ -216,10 +216,10 @@ class SightController {
       final resultText = await geminiService.readDocument(imageBytes);
 
       _fullGeminiResponse = resultText;
-      activeActionStatus = resultText.length > 300
-          ? "${resultText.substring(0, 300)}..."
-          : resultText;
+      activeActionStatus = "Reading document text...";
       onStateChanged();
+
+      debugPrint("GEMINI RESPONSE LENGTH: ${_fullGeminiResponse.length}");
 
       Vibration.vibrate(duration: 80);
       await ttsService.speak(_fullGeminiResponse);
@@ -322,10 +322,10 @@ class SightController {
       final aiComplete = stopwatch.elapsedMilliseconds;
 
       _fullGeminiResponse = answer;
-      activeActionStatus = answer.length > 300
-          ? "${answer.substring(0, 300)}..."
-          : answer;
+      activeActionStatus = "Reading answer...";
       onStateChanged();
+
+      debugPrint("GEMINI RESPONSE LENGTH: ${_fullGeminiResponse.length}");
 
       Vibration.vibrate(duration: 80);
       final ttsStart = stopwatch.elapsedMilliseconds;

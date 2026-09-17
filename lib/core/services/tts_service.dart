@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
 class TtsService {
@@ -19,6 +20,12 @@ class TtsService {
     await _tts.stop();
 
     final chunks = _splitTextIntoChunks(text);
+    final int totalLength = chunks.fold<int>(0, (sum, c) => sum + c.length);
+
+    debugPrint("TTS TEXT LENGTH: ${text.length}");
+    debugPrint("TTS CHUNKS: ${chunks.length}");
+    debugPrint("TTS INPUT TOTAL LENGTH: $totalLength");
+
     for (final chunk in chunks) {
       if (_speakSessionId != currentSession) return;
       if (chunk.isNotEmpty) {
