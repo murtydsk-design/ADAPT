@@ -1,4 +1,4 @@
-abstract class OpenAiPrompts {
+abstract class GeminiPrompts {
   /// Prompt for initial scene description in Item Scanner mode.
   static const String sceneDescriptionPrompt = """
 You are UniAccess, an accessibility vision assistant for visually impaired users.

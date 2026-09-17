@@ -4,8 +4,8 @@ import 'package:vibration/vibration.dart';
 
 import '../core/constants/permissions.dart';
 import '../core/services/camera_service.dart';
+import '../core/services/gemini_service.dart';
 import '../core/services/hardware_button_service.dart';
-import '../core/services/openai_service.dart';
 import '../core/services/proximity_service.dart';
 import '../core/services/speech_service.dart';
 import '../core/services/torch_service.dart';
@@ -29,7 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late final SpeechService _speechService;
   late final CameraService _cameraService;
   late final TorchService _torchService;
-  late final OpenAiService _openAiService;
+  late final GeminiService _geminiService;
   late final HardwareButtonService _hardwareButtonService;
   late final ProximityService _proximityService;
 
@@ -54,13 +54,13 @@ class _HomeScreenState extends State<HomeScreen> {
     _speechService = SpeechService();
     _cameraService = CameraService();
     _torchService = TorchService();
-    _openAiService = OpenAiService();
+    _geminiService = GeminiService();
     _hardwareButtonService = HardwareButtonService();
     _proximityService = ProximityService();
 
     _sightController = SightController(
       cameraService: _cameraService,
-      openAiService: _openAiService,
+      geminiService: _geminiService,
       torchService: _torchService,
       speechService: _speechService,
       ttsService: _ttsService,

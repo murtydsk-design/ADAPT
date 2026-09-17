@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:vibration/vibration.dart';
 import '../../core/models/ai_intent.dart';
 import '../../core/services/camera_service.dart';
-import '../../core/services/openai_service.dart';
+import '../../core/services/gemini_service.dart';
 import '../../core/services/speech_service.dart';
 import '../../core/services/torch_service.dart';
 import '../../core/services/tts_service.dart';
@@ -12,7 +12,7 @@ import '../../core/utils/image_compressor.dart';
 
 class SightController {
   final CameraService cameraService;
-  final OpenAiService openAiService;
+  final GeminiService geminiService;
   final TorchService torchService;
   final SpeechService speechService;
   final TtsService ttsService;
@@ -31,8 +31,8 @@ class SightController {
   // Request lock to prevent duplicate concurrent AI calls
   bool _isAiRequestInProgress = false;
 
-  String _fullAiResponse = "";
-  String get fullAiResponse => _fullAiResponse;
+  String _fullGeminiResponse = "";
+  String get fullGeminiResponse => _fullGeminiResponse;
 
   String activeActionStatus = "Initializing...";
 
@@ -43,7 +43,7 @@ class SightController {
 
   SightController({
     required this.cameraService,
-    required this.openAiService,
+    required this.geminiService,
     required this.torchService,
     required this.speechService,
     required this.ttsService,
@@ -55,7 +55,7 @@ class SightController {
 
   Future<void> lockMode({required VoidCallback onStateChanged}) async {
     isLocked = true;
-    _fullAiResponse = "";
+    _fullGeminiResponse = "";
     try {
       await cameraService.initCamera();
       activeActionStatus = "Sight: $currentToolName";
@@ -70,9 +70,9 @@ class SightController {
 
   Future<void> unlockMode({required VoidCallback onStateChanged}) async {
     isLocked = false;
-    _fullAiResponse = "";
+    _fullGeminiResponse = "";
     cancelVoiceQuestion(onStateChanged: onStateChanged);
-    openAiService.clearConversation();
+    geminiService.clearConversation();
     await torchService.turnOff(cameraService.controller);
     await cameraService.disposeCamera();
     onStateChanged();
@@ -81,8 +81,8 @@ class SightController {
   void cycleSightTool({required VoidCallback onStateChanged}) {
     if (isProcessingAi || isListeningSpeech) return;
 
-    _fullAiResponse = "";
-    openAiService.clearConversation();
+    _fullGeminiResponse = "";
+    geminiService.clearConversation();
     _sightToolIndex = (_sightToolIndex + 1) % _sightTools.length;
     activeActionStatus = "Sight: $currentToolName";
 
@@ -107,7 +107,7 @@ class SightController {
     }
   }
 
-  /// Item Scanner: Capture 1 image, optimize, send OpenAI Vision Request
+  /// Item Scanner: Capture 1 image, optimize, send Gemini Vision Request
   Future<void> scanScene({required VoidCallback onStateChanged}) async {
     if (_isAiRequestInProgress || !cameraService.isInitialized) return;
 
@@ -115,7 +115,7 @@ class SightController {
 
     _isAiRequestInProgress = true;
     isProcessingAi = true;
-    _fullAiResponse = "";
+    _fullGeminiResponse = "";
     activeActionStatus = "Identifying items in scene...";
     onStateChanged();
 
@@ -130,9 +130,9 @@ class SightController {
       final captureComplete = totalStopwatch.elapsedMilliseconds;
 
       if (rawBytes == null || rawBytes.isEmpty) {
-        _fullAiResponse = "Captured image is empty.";
+        _fullGeminiResponse = "Captured image is empty.";
         activeActionStatus = "Captured image is empty.";
-        await ttsService.speak(_fullAiResponse);
+        await ttsService.speak(_fullGeminiResponse);
         return;
       }
 
@@ -141,18 +141,18 @@ class SightController {
       final prepComplete = totalStopwatch.elapsedMilliseconds;
 
       if (imageBytes.isEmpty) {
-        _fullAiResponse = "Captured image is empty.";
+        _fullGeminiResponse = "Captured image is empty.";
         activeActionStatus = "Captured image is empty.";
-        await ttsService.speak(_fullAiResponse);
+        await ttsService.speak(_fullGeminiResponse);
         return;
       }
 
-      // Step 2: Request Scene Understanding from OpenAI Vision
+      // Step 2: Request Scene Understanding from Gemini Vision
       final aiStart = totalStopwatch.elapsedMilliseconds;
-      final description = await openAiService.describeScene(imageBytes);
+      final description = await geminiService.describeScene(imageBytes);
       final aiComplete = totalStopwatch.elapsedMilliseconds;
 
-      _fullAiResponse = description;
+      _fullGeminiResponse = description;
       activeActionStatus = description.length > 300
           ? "${description.substring(0, 300)}..."
           : description;
@@ -160,19 +160,19 @@ class SightController {
 
       Vibration.vibrate(duration: 80);
       final ttsStart = totalStopwatch.elapsedMilliseconds;
-      await ttsService.speak(_fullAiResponse);
+      await ttsService.speak(_fullGeminiResponse);
 
       // Latency Logging
       debugPrint("[PERF] Item Scanner capture: ${captureComplete - captureStart}ms");
       debugPrint("[PERF] Image optimization: ${prepComplete - captureComplete}ms (size: ${(imageBytes.length / 1024).toStringAsFixed(1)}KB)");
-      debugPrint("[PERF] OpenAI response: ${aiComplete - aiStart}ms");
+      debugPrint("[PERF] Gemini response: ${aiComplete - aiStart}ms");
       debugPrint("[PERF] TTS start: ${ttsStart - aiComplete}ms");
       debugPrint("[PERF] Total scan-to-speech latency: ${totalStopwatch.elapsedMilliseconds}ms");
     } catch (e) {
-      _fullAiResponse = "";
-      final userMessage = (e is OpenAiException)
+      _fullGeminiResponse = "";
+      final userMessage = (e is GeminiException)
           ? e.userMessage
-          : "OpenAI is temporarily unavailable.";
+          : "Gemini service is temporarily unavailable.";
       activeActionStatus = userMessage;
       await ttsService.speak(userMessage);
     } finally {
@@ -191,7 +191,7 @@ class SightController {
 
     _isAiRequestInProgress = true;
     isProcessingAi = true;
-    _fullAiResponse = "";
+    _fullGeminiResponse = "";
     activeActionStatus = "Reading entire document...";
     onStateChanged();
 
@@ -201,9 +201,9 @@ class SightController {
 
       final rawBytes = await cameraService.captureImage();
       if (rawBytes == null || rawBytes.isEmpty) {
-        _fullAiResponse = "Captured image is empty.";
+        _fullGeminiResponse = "Captured image is empty.";
         activeActionStatus = "Captured image is empty.";
-        await ttsService.speak(_fullAiResponse);
+        await ttsService.speak(_fullGeminiResponse);
         return;
       }
 
@@ -213,21 +213,21 @@ class SightController {
         quality: 88,
       );
 
-      final resultText = await openAiService.readDocument(imageBytes);
+      final resultText = await geminiService.readDocument(imageBytes);
 
-      _fullAiResponse = resultText;
+      _fullGeminiResponse = resultText;
       activeActionStatus = resultText.length > 300
           ? "${resultText.substring(0, 300)}..."
           : resultText;
       onStateChanged();
 
       Vibration.vibrate(duration: 80);
-      await ttsService.speak(_fullAiResponse);
+      await ttsService.speak(_fullGeminiResponse);
     } catch (e) {
-      _fullAiResponse = "";
-      final userMessage = (e is OpenAiException)
+      _fullGeminiResponse = "";
+      final userMessage = (e is GeminiException)
           ? e.userMessage
-          : "OpenAI is temporarily unavailable.";
+          : "Gemini service is temporarily unavailable.";
       activeActionStatus = userMessage;
       await ttsService.speak(userMessage);
     } finally {
@@ -285,7 +285,7 @@ class SightController {
     }
   }
 
-  /// Process Voice Follow-Up: Single OpenAI Vision Request using stored image
+  /// Process Voice Follow-Up: Single Gemini Multimodal Request using stored image
   Future<void> processFollowUp(
     String question, {
     required VoidCallback onStateChanged,
@@ -300,12 +300,11 @@ class SightController {
     final stopwatch = Stopwatch()..start();
 
     try {
-      final storedImage = openAiService.lastScannedImageBytes;
-      if (storedImage == null || storedImage.isEmpty) {
-        _fullAiResponse = "No image scanned yet. Please scan a scene first.";
-        activeActionStatus = _fullAiResponse;
+      if (!geminiService.hasStoredImage) {
+        _fullGeminiResponse = "No image scanned yet. Please scan a scene first.";
+        activeActionStatus = _fullGeminiResponse;
         onStateChanged();
-        await ttsService.speak(_fullAiResponse);
+        await ttsService.speak(_fullGeminiResponse);
         return;
       }
 
@@ -316,14 +315,13 @@ class SightController {
       onStateChanged();
 
       final aiStart = stopwatch.elapsedMilliseconds;
-      final answer = await openAiService.answerFollowUp(
-        imageBytes: storedImage,
-        question: question,
-        intent: localIntent.label,
+      final answer = await geminiService.answerFollowUp(
+        followUpQuestion: question,
+        intentLabel: localIntent.label,
       );
       final aiComplete = stopwatch.elapsedMilliseconds;
 
-      _fullAiResponse = answer;
+      _fullGeminiResponse = answer;
       activeActionStatus = answer.length > 300
           ? "${answer.substring(0, 300)}..."
           : answer;
@@ -331,16 +329,16 @@ class SightController {
 
       Vibration.vibrate(duration: 80);
       final ttsStart = stopwatch.elapsedMilliseconds;
-      await ttsService.speak(_fullAiResponse);
+      await ttsService.speak(_fullGeminiResponse);
 
-      debugPrint("[PERF] Follow-up OpenAI response: ${aiComplete - aiStart}ms");
+      debugPrint("[PERF] Follow-up Gemini response: ${aiComplete - aiStart}ms");
       debugPrint("[PERF] Follow-up TTS start: ${ttsStart - aiComplete}ms");
       debugPrint("[PERF] Total follow-up latency: ${stopwatch.elapsedMilliseconds}ms");
     } catch (e) {
-      _fullAiResponse = "";
-      final userMessage = (e is OpenAiException)
+      _fullGeminiResponse = "";
+      final userMessage = (e is GeminiException)
           ? e.userMessage
-          : "OpenAI is temporarily unavailable.";
+          : "Gemini service is temporarily unavailable.";
       activeActionStatus = userMessage;
       await ttsService.speak(userMessage);
     } finally {
