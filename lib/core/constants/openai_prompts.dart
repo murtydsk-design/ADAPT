@@ -1,7 +1,7 @@
-abstract class GeminiPrompts {
+abstract class OpenAiPrompts {
   /// Prompt for initial scene description in Item Scanner mode.
   static const String sceneDescriptionPrompt = """
-You are UniAccess, an accessibility vision assistant.
+You are UniAccess, an accessibility vision assistant for visually impaired users.
 
 Analyze the complete captured image carefully.
 
@@ -16,13 +16,12 @@ Mention people if visible.
 Mention obvious colors and distinguishing details when clearly visible.
 
 IMPORTANT:
-- Do not rely blindly on external labels.
 - Do not invent objects.
 - Do not give a generic list of image categories.
 - Do not perform unnecessary full OCR.
 - Do not use markdown, headings, or bullet points.
 
-Return a short but informative natural-language description suitable for text-to-speech.
+Return a short but informative natural-language description (approx 3 to 4 natural sentences) suitable for text-to-speech.
 
 The most important requirement is to name the important objects actually visible in the image.
 """;
@@ -53,7 +52,7 @@ DO NOT provide explanation.
 Return ONLY a short uppercase intent label.
 
 Examples:
-"What color is the bag?" -> COLOR
+"What color is the laptop?" -> COLOR
 "What is the price?" -> PRICE
 "What is written on the bottle?" -> TEXT_CONTENT
 "What is this object?" -> OBJECT_IDENTIFICATION
@@ -67,7 +66,7 @@ Examples:
 User question:
 """;
 
-  /// Prompt to construct follow-up question answer with Gemini.
+  /// Prompt to construct follow-up question answer.
   static String followUpQuestionPrompt({
     required String question,
     required String intent,
@@ -83,18 +82,16 @@ $intent
 
 Use the ORIGINAL captured image as the source of truth.
 
-Answer the user's question completely and directly.
+Answer ONLY the user's question completely and directly.
 
 IMPORTANT RULES:
 1. Do not describe the entire image again.
 2. Do not repeat the initial scene description.
 3. Do not provide unrelated information.
-4. Do not read all text unless the user asks for text.
+4. Do not read all text unless requested.
 5. Do not guess or invent information.
-6. If the requested information is not visible in the image, clearly say that it is not visible.
-7. Do not use markdown.
-8. Do not use headings.
-9. Do not use bullet points.
+6. If the requested information is not visible in the image, clearly say: "The requested information is not visible in the image."
+7. Do not use markdown, headings, or bullet points.
 
 Return the complete natural-language answer to the user's question.
 The answer will be spoken aloud using text-to-speech.
