@@ -153,7 +153,7 @@ class SightController {
       final aiComplete = totalStopwatch.elapsedMilliseconds;
 
       _fullGeminiResponse = description;
-      activeActionStatus = "Scan complete. Reading result...";
+      activeActionStatus = "Reading result...";
       onStateChanged();
 
       debugPrint("GEMINI RESPONSE LENGTH: ${_fullGeminiResponse.length}");
